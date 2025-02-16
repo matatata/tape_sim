@@ -164,6 +164,7 @@ void openWavFile(WavFile *wav, char *filename, char *directoryPath, short numCha
     size_t byteOffset = sampleOffset * bytesPerSample;
     // Adjust for header size
     size_t overwriteStartPos = headerSize + byteOffset;
+
     fseek(wav->file, overwriteStartPos, SEEK_SET);
   }
 
@@ -245,28 +246,45 @@ static int streamCallback(const void *inputBuffer, void *outputBuffer,
   size_t minReadFrames = framesPerBuffer;                   // Initialize with the maximum possible
   unsigned char *writeBuffer = malloc(framesPerBuffer * 3); // Allocate buffer
 
+    long recordDelay = 0;
+    
+    if(isRecording){
+        if(recorder.recordingDelay > 0){
+            recordDelay = 0;
+        }
+        else {
+            recordDelay = framesPerBuffer - recorder.recordingDelay;
+            recorder.recordingDelay-=framesPerBuffer;
+        }
+    }
+    
+    
   for (size_t channel = 0; channel < recorder.trackCount; ++channel)
   {
-    if (isRecording)
+    if (isRecording && recorder.tracks[channel].recordEnabled)
     {
-      if (recorder.tracks[channel].recordEnabled)
-      {
         // set db amplitude levels
         float rms = calculateRMS(inputBuffers[channel], framesPerBuffer);
         float dbLevel = rmsToDb(rms);
-        printf("Recording - Channel %d: dB Level = %f\n", channel, dbLevel);
+        //printf("Recording - Channel %d: dB Level = %f\n", channel, dbLevel);
         recorder.tracks[channel].currentAmplitudeLevel = dbLevel;
         // channel data and write buffer for wav
         const unsigned char *channelData = inputBuffers[channel];
+        
         // Accumulate the samples for the current channel into writeBuffer
         for (unsigned long frame = 0; frame < framesPerBuffer; ++frame)
         {
           int byteIndex = frame * 3;
           memcpy(&writeBuffer[frame * 3], &channelData[byteIndex], 3);
         }
-        // Now, writeBuffer contains all the frames for the current channel, so write it all at once
-        writeWavData(&recorder.tracks[channel], writeBuffer, framesPerBuffer * 3);
-      }
+        
+        if(recordDelay <= 0){
+            //skip
+        }
+        else {
+            // Now, writeBuffer contains all the frames for the current channel, so write it all at once
+            writeWavData(&recorder.tracks[channel], writeBuffer + recordDelay * 3, framesPerBuffer * 3);
+        }
     }
     else // Handle Playback for non record enabled tracks
     {
@@ -299,7 +317,7 @@ static int streamCallback(const void *inputBuffer, void *outputBuffer,
         float rms = calculateRMS(outputBuffers[channel], readFrames);
         dbLevel = rmsToDb(rms);
       }
-      printf("Playback - Channel %d: dB Level = %f\n", channel, dbLevel);
+      //printf("Playback - Channel %d: dB Level = %f\n", channel, dbLevel);
       recorder.tracks[channel].currentAmplitudeLevel = dbLevel;
 
       // Determine the minimum readFrames across all channels for playback tracking
@@ -338,16 +356,17 @@ void initStream()
   inputParameters.sampleFormat = paInt24 | paNonInterleaved;                                           // Correct way to combine flags
   inputParameters.suggestedLatency = Pa_GetDeviceInfo(inputParameters.device)->defaultLowInputLatency; // lowest latency
   inputParameters.hostApiSpecificStreamInfo = NULL;
-
+    
+    
   // Setup output parameters
   PaStreamParameters outputParameters;
   outputParameters.device = Pa_GetDefaultOutputDevice();
   outputParameters.channelCount = recorder.trackCount;                                                   // Number of tracks
   outputParameters.sampleFormat = paInt24 | paNonInterleaved;                                            // Correct way to combine flags
-  outputParameters.suggestedLatency = Pa_GetDeviceInfo(outputParameters.device)->defaultLowInputLatency; // lowest latency
+    outputParameters.suggestedLatency = Pa_GetDeviceInfo(outputParameters.device)->defaultLowOutputLatency; // lowest latency
   outputParameters.hostApiSpecificStreamInfo = NULL;
 
-  printf("Initializing stream with %d channels.\n", recorder.trackCount); // Typically NULL
+    printf("Initializing stream with %d channels. Latency input %f output %f\n", recorder.trackCount,inputParameters.suggestedLatency,outputParameters.suggestedLatency); // Typically NULL
 
   // start PA audio stream
   err = Pa_OpenStream(
@@ -370,6 +389,9 @@ void initStream()
   // Assuming each sample in the buffer corresponds to a frame of audio
   size_t startPosition = (size_t)(sampleRate * startTimeInSeconds);
   recorder.playbackPosition = startPosition;
+    
+  recorder.recordingDelay = (Pa_GetStreamInfo(stream)->inputLatency + Pa_GetStreamInfo(stream)->outputLatency) * sampleRate;
+
 }
 
 void onRewind()
@@ -546,6 +568,7 @@ void initAudio()
 
 void cleanupAudio()
 {
+printf("Cleanup");
   PaError err;
 
   Pa_StopStream(stream);

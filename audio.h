@@ -13,7 +13,7 @@
 #include <time.h>
 #include <math.h>
 #include <stdbool.h>
-#include "../portaudio/include/portaudio.h"
+#include "portaudio.h"
 // macos specific
 #include <CoreAudio/CoreAudio.h>
 
@@ -41,9 +41,10 @@ typedef struct
   WavFile *tracks;
   int trackCount;
   int playbackPosition;      // Current playback position in the buffer
+  long recordingDelay;
 } Recorder;
 
-Recorder recorder = {NULL, 0, 0}; // Initializer ensures tracks is NULL
+Recorder recorder = {NULL, 0, 0, 0}; // Initializer ensures tracks is NULL
 
 // functions
 void initAudio();
